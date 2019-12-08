@@ -1,5 +1,7 @@
 import numpy as np
 import tensorflow as tf
+from collections import Counter
+
 
 ########## #####################
 PAD_TOKEN = '<pad>'
@@ -9,15 +11,16 @@ UNK_TOKEN = '<unk>'
 ########## #####################
 
 def build_vocab(sentences, min_occur=5):
-	"""
-  	Builds vocab from list of sentences
+    """
+    Builds vocab from list of sentences
 
-	:param sentences:  list of sentences, each a list of words
-	:param min_occur: minimum number of total occurances required for a word to qualify for inclusion in the vocab
-	:return: tuple of (vocab dictionary: word --> unique index, list of all words, vocab_size)
-  """
-	#create word2id-> map pf each word/token to its number ID in the vocab
+    :param sentences:  list of sentences, each a list of words
+    :param min_occur: minimum number of total occurances required for a word to qualify for inclusion in the vocab
+    :return: tuple of (vocab dictionary: word --> unique index, list of all words, vocab_size)
+    """
+    #create word2id-> map pf each word/token to its number ID in the vocab
     word2id = {PAD_TOKEN:0, GO_TOKEN:1, EOS_TOKEN:2, UNK_TOKEN:3}
+
     #create id2word-> list of all tokens/words indexed by their ID
     #id2word = [PAD_TOKEN, GO_TOKEN, EOS_TOKEN, UNK_TOKEN]
 
