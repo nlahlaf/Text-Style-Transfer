@@ -2,7 +2,6 @@ import numpy as np
 import tensorflow as tf
 from collections import Counter
 
-
 ########## #####################
 PAD_TOKEN = '<pad>'
 GO_TOKEN = '<go>'
@@ -17,35 +16,34 @@ def build_vocab(sentences, min_occur=5):
     :param sentences:  list of sentences, each a list of words
     :param min_occur: minimum number of total occurances required for a word to qualify for inclusion in the vocab
     :return: tuple of (vocab dictionary: word --> unique index, list of all words, vocab_size)
-    """
+  """
     #create word2id-> map pf each word/token to its number ID in the vocab
     word2id = {PAD_TOKEN:0, GO_TOKEN:1, EOS_TOKEN:2, UNK_TOKEN:3}
-
     #create id2word-> list of all tokens/words indexed by their ID
-    #id2word = [PAD_TOKEN, GO_TOKEN, EOS_TOKEN, UNK_TOKEN]
+    id2word = [PAD_TOKEN, GO_TOKEN, EOS_TOKEN, UNK_TOKEN]
 
     words = [word for sent in sentences for word in sent] #list of all words in all sentences
     cnt = Counter(words) #counts occurances
     for word in cnt:
         if cnt[word] >= min_occur:
             word2id[word] = len(word2id)
-    #        id2word.append(word)
+            id2word.append(word)
     vocab_size = len(word2id)
 
-    return word2id
+    return word2id, id2word
 
 
 def read_data(file_name):
-	"""
+    """
   Load text data from file
 
-	:param file_name:  string, name of data file
-	:return: list of sentences, each a list of words split on whitespace
+    :param file_name:  string, name of data file
+    :return: list of sentences, each a list of words split on whitespace
   """
-	text = []
-	with open(file_name, 'rt') as data_file:
-		for line in data_file: text.append(line.split())
-	return text
+    text = []
+    with open(file_name, 'rt') as data_file:
+        for line in data_file: text.append(line.split())
+    return text
 
 def get_batch(x, y, word2id, min_len=5):
     pad = word2id[PAD_TOKEN]
@@ -85,6 +83,7 @@ def get_batches(x0, x1, word2id, batch_size):
     if len(x1) < len(x0):
         x1 = makeup(x1, len(x0))
     n = len(x0)
+    #batch_size = int(batch_size / 2)
 
     batches = []
     s = 0
@@ -97,21 +96,21 @@ def get_batches(x0, x1, word2id, batch_size):
     return batches
 
 def get_data(train0_file, train1_file, test0_file, test1_file):
-	"""
-	inputs: files for training sentiments 0 and 1, testing sentiments 0 and 1
+    """
+    inputs: files for training sentiments 0 and 1, testing sentiments 0 and 1
 
-	returns: list of training sentences (0 and 1 sentiments)
-	.........list of testing sentences (0 and 1 sentiments)
-	.........the vocab
-	"""
-	train0 = read_data(train0_file)
-	train1 = read_data(train1_file)
+    returns: list of training sentences (0 and 1 sentiments)
+    .........list of testing sentences (0 and 1 sentiments)
+    .........the vocab
+    """
+    train0 = read_data(train0_file)
+    train1 = read_data(train1_file)
 
-	test0 = read_data(test0_file)
-	test1 = read_data(test1_file)
+    test0 = read_data(test0_file)
+    test1 = read_data(test1_file)
 
-	vocab = build_vocab(train0 + train1)
+    vocab, id2word = build_vocab(train0 + train1)
 
-	return train0, train1, test0, test1, vocab
+    return train0, train1, test0, test1, vocab, id2word
 
-	
+    
