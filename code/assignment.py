@@ -4,17 +4,14 @@ import gym
 from pylab import *
 import numpy as np
 import tensorflow as tf
-
 from preprocess import *
-
 import tensorflow_gan as tfgan
 import tensorflow_hub as hub
-
 import numpy as np
-
 from imageio import imwrite
 import os
 import argparse
+from datetime import datetime
 
 # Killing optional CPU driver warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -22,6 +19,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 gpu_available = tf.test.is_gpu_available()
 print("GPU Available: ", gpu_available)
 
+#parser for optional command line arguments
 parser = argparse.ArgumentParser(description='aligned')
 
 parser.add_argument('--restore-checkpoint', action='store_true',
@@ -33,7 +31,7 @@ parser.add_argument('--out-dir', type=str, default='./output',
 parser.add_argument('--log-every', type=int, default=50,
                     help='Print losses after every [this many] training iterations')
 
-parser.add_argument('--save-every', type=int, default=100,
+parser.add_argument('--save-every', type=int, default=10,
                     help='Save the state of the network after every [this many] training iterations')
 
 parser.add_argument('--device', type=str, default='GPU:0' if gpu_available else 'CPU:0',
@@ -41,6 +39,7 @@ parser.add_argument('--device', type=str, default='GPU:0' if gpu_available else 
 
 args = parser.parse_args()
 
+#The encoder model for our auto-encoder
 class Encoder_Model(tf.keras.Model):
     def __init__(self, vocab_size):
         super(Encoder_Model, self).__init__()
@@ -55,7 +54,6 @@ class Encoder_Model(tf.keras.Model):
         self.n_layers = 1
         self.learning_rate = 0.0005
 
-        #possibly only want to use one embedding layer --> in which case should probably merge encoder and generator classes?
         self.embedding_layer = tf.keras.layers.Embedding(self.vocab_size, self.embedding_size)
         self.dense1 = tf.keras.layers.Dense(self.dim_y)
         self.gru1 = tf.keras.layers.GRU(self.dim_h, dropout=0.5, return_sequences=True, return_state=True)
@@ -66,13 +64,11 @@ class Encoder_Model(tf.keras.Model):
     def call(self, batch):
         labels = tf.reshape(batch['labels'], [-1, 1])
         enc_inputs = tf.convert_to_tensor(batch['enc_inputs'])
-
         enc_inputs = self.embedding_layer(enc_inputs)
 
         init_state = tf.concat([self.dense1(labels), tf.zeros([batch['size'], self.dim_z])], 1)
         _, z = self.gru1(enc_inputs, initial_state=init_state)
         z = z[:, self.dim_y:]
-
 
         return z
     
@@ -80,6 +76,7 @@ class Encoder_Model(tf.keras.Model):
     def loss_function(self):
         pass
 
+#The decoder/generator model for our auto-encoder
 class Generator_Model(tf.keras.Model):
     def __init__(self, vocab_size):
         super(Generator_Model, self).__init__()
@@ -94,7 +91,6 @@ class Generator_Model(tf.keras.Model):
         self.n_layers = 1
         self.learning_rate = 0.0005
         self.dropout = 0.5
-
 
         self.embedding_layer = tf.keras.layers.Embedding(self.vocab_size, self.embedding_size)
         self.dense1 = tf.keras.layers.Dense(self.dim_y)
@@ -111,22 +107,20 @@ class Generator_Model(tf.keras.Model):
 
         dec_inputs = self.embedding_layer(dec_inputs)
 
-        if transfer:
+        if transfer: #use to generate output sentences
             self.h_tsf = tf.concat([self.dense1(1-labels), z], 1)
             g_outputs, _ = self.gru1(dec_inputs, initial_state=self.h_tsf)
-        else:
+        else: #use to train
             self.h_ori = tf.concat([self.dense1(labels), z], 1)
             g_outputs, _ = self.gru1(dec_inputs, initial_state=self.h_ori)
-        
-
-        #attach h0 to the front
-        #teach_h = tf.concat([tf.expand_dims(self.h_ori, 1), g_outputs], 1)
 
         g_outputs = tf.nn.dropout(g_outputs, self.dropout)
 
         g_outputs = tf.reshape(g_outputs, [-1, self.dim_h])
 
         g_logits = self.projection(g_outputs)
+        
+        #this is where the teacher-forcing and cross-alignment happened in the original architecture
 
         return g_logits
     
@@ -137,6 +131,7 @@ class Generator_Model(tf.keras.Model):
         loss_rec = tf.reduce_sum(loss_rec) / tf.cast(batch['size'], dtype=tf.float32)
         return loss_rec
 
+#the discriminator for our model, which compares the latent content space of positive with that of negative sentences
 class Discriminator_Model(tf.keras.Model):
     def __init__(self, batch_size):
         super(Discriminator_Model, self).__init__()
@@ -148,7 +143,6 @@ class Discriminator_Model(tf.keras.Model):
 
         self.dense1_x2 = tf.keras.layers.Dense(100, activation="relu")
         self.dense2_x2 = tf.keras.layers.Dense(1)
-
 
         pass
     
@@ -173,9 +167,15 @@ class Discriminator_Model(tf.keras.Model):
 
         return loss
 
+#for plotting loss in tensorboard
+logdir = "logs/scalars/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+file_writer = tf.summary.create_file_writer(logdir + "/metrics")
+file_writer.set_as_default()
+
 def train(batch, encoder, generator, discriminator, iteration, manager):
     half = batch['size'] // 2
 
+    #first gradient tape
     with tf.GradientTape() as enc_dec_tape:
         z = encoder.call(batch)
         g_logits = generator.call(batch, z)
@@ -193,7 +193,8 @@ def train(batch, encoder, generator, discriminator, iteration, manager):
 
     enc_grads = enc_dec_tape.gradient(final_loss, generator.trainable_variables)
     generator.optimizer.apply_gradients(zip(enc_grads, generator.trainable_variables))
-
+    
+    #second gradient tape
     with tf.GradientTape() as enc_dec_tape:
         z = encoder.call(batch)
         g_logits = generator.call(batch, z)
@@ -206,12 +207,18 @@ def train(batch, encoder, generator, discriminator, iteration, manager):
 
     d_grads = enc_dec_tape.gradient(final_loss, discriminator.trainable_variables)
     discriminator.optimizer.apply_gradients(zip(d_grads, discriminator.trainable_variables))
+    
+    #for plotting loss in tensorboard
+    with file_writer.as_default():
+        tf.summary.scalar('total loss', final_loss, step=discriminator.optimizer.iterations)
 
+    #for saving training checkpoints
     if iteration % args.save_every == 0:
         manager.save()
 
     pass
 
+#call to generate output sentences with transfered style
 def transfer(encoder, generator, id2word, batch):
     z = encoder.call(batch)
     g_logits = generator.call(batch, z, transfer=True)
@@ -243,11 +250,10 @@ def main():
     train0, train1, test0, test1, vocab, id2word = get_data(file_loc + 'train.0', file_loc + 'train.1', file_loc + "test.0", file_loc + "test.1")
     batch_size = 64
     batches = get_batches(train0, train1, vocab, batch_size)
+    
     # Initialize model
-
     encoder = Encoder_Model(vocab_size = len(vocab))
     generator = Generator_Model(vocab_size = len(vocab))
-
     discriminator = Discriminator_Model(batch_size)
 
     max_epochs = 10
@@ -273,11 +279,8 @@ def main():
                 print('========================== EPOCH %d  ==========================' % epoch)
                 for iteration, batch in enumerate(batches):
                     train(batch, encoder, generator, discriminator, iteration, manager)
-                    # if iteration % args.save_every == 0:
-                    if iteration % 10 == 0:
+                    if iteration % args.save_every == 0:
                         transfer(encoder, generator, id2word, batch)
-                        # print(tsf[0:10])
-                # print("Average FID for Epoch: " + str(avg_fid))
                 # Save at the end of the epoch, too
                 print("**** SAVING CHECKPOINT AT END OF EPOCH ****")
                 manager.save()
